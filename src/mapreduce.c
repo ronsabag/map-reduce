@@ -179,3 +179,102 @@ grabNewFile:
   else
     goto grabNewFile;
 }
+
+/*  Store <key,value> into partition
+ *  If key already exists, append the value to the end of existing value list.
+ *  Else, find the partition this <key,value> should go to and hash it into the partition's hash
+ *table.
+ **/
+void MR_Emit(char* key, char* value) {
+  unsigned long partitionNumber = _Partition(key, numOfPartition);
+  unsigned long hashtablePosition = hash_function(key, SIZE_HASHTABLE);
+
+  Partition* targetPartition = partitionArray[partitionNumber];
+  HashTableBucket* targetBucket = targetPartition->hashTable[hashtablePosition];
+
+  // creates a keyValueNode, insert it if the key doesn't exist in the linkedlist in the hashtable
+  // bucket yet. free this if it already exist
+  KeyValueNode* keyValue = malloc(sizeof(KeyValueNode));
+  keyValue->key = strdup(key);
+  keyValue->values = malloc(SIZE_VALUESARRAY * sizeof(char*));
+  keyValue->values[0] = strdup(value);
+  keyValue->numOfElementsInValuesArray = 1;
+  keyValue->sizeOfValuesArray = SIZE_VALUESARRAY;
+  keyValue->next = NULL;
+
+  pthread_mutex_lock(&(targetBucket->bucketLock));
+
+  if (targetBucket->head == NULL) {
+    targetBucket->head = keyValue;
+
+    // FATAL PROBLEM: If bucket 1 and bucket 2 of the same partition (different thread) want to set
+    // the head to keyValueNode, they will need to BOTH update to the common shared variable of
+    // targetPartition->numKeys. We need a partition lock here.       //VVVVIP
+
+    pthread_mutex_unlock(&(targetBucket->bucketLock));
+
+    pthread_mutex_lock(&(targetPartition->partitionLock));
+    targetPartition->numKeys = targetPartition->numKeys + 1;
+    pthread_mutex_unlock(&(targetPartition->partitionLock));
+
+    return;
+  } else {
+    KeyValueNode* curr = targetBucket->head;
+    // check for first node in linked list
+    if (strcmp(curr->key, key) == 0) {
+      int numOfElements = curr->numOfElementsInValuesArray;
+      int capacity = curr->sizeOfValuesArray;
+      // if the valuesArray is full, expand it by twice its size
+      if (numOfElements >= capacity) {
+        curr->values = realloc(curr->values, (2 * capacity) * sizeof(char*));
+        curr->sizeOfValuesArray = 2 * capacity;
+      }
+      curr->values[numOfElements] = strdup(value);
+      curr->numOfElementsInValuesArray = curr->numOfElementsInValuesArray + 1;
+
+      pthread_mutex_unlock(&(targetBucket->bucketLock));
+
+      free(keyValue->key);
+      free(keyValue->values[0]);
+      free(keyValue->values);
+      free(keyValue);
+      return;
+    }
+    // check for second node onwards in linked list
+    while (curr->next != NULL) {
+      if (strcmp(curr->next->key, key) == 0) {
+        int numOfElements = curr->next->numOfElementsInValuesArray;
+        int capacity = curr->next->sizeOfValuesArray;
+        // if the valuesArray is full, expand it by twice its size
+        if (numOfElements >= capacity) {
+          curr->next->values = realloc(curr->next->values, (2 * capacity) * sizeof(char*));
+          curr->next->sizeOfValuesArray = 2 * capacity;
+        }
+        curr->next->values[numOfElements] = strdup(value);
+        curr->next->numOfElementsInValuesArray = curr->next->numOfElementsInValuesArray + 1;
+
+        pthread_mutex_unlock(&(targetBucket->bucketLock));
+
+        free(keyValue->key);
+        free(keyValue->values[0]);
+        free(keyValue->values);
+        free(keyValue);
+        return;
+      }
+      curr = curr->next;
+    }
+    // if we get to here, it means that the key doesn't exist in the bucket's linked list yet
+    // we will need to create a new <key,pair> node and insert it to the end of linked list
+
+    curr->next = keyValue;
+
+    pthread_mutex_unlock(&(targetBucket->bucketLock));
+
+    pthread_mutex_lock(&(targetPartition->partitionLock));
+    targetPartition->numKeys = targetPartition->numKeys + 1;
+    pthread_mutex_unlock(&(targetPartition->partitionLock));
+
+    return;
+  }
+}
+
