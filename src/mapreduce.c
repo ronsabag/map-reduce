@@ -87,3 +87,95 @@ int numOfPartition;
 Mapper _Map;
 Reducer _Reduce;
 Partitioner _Partition;
+
+////////////////////////////////////////////////////////////////////////////////////
+
+/*
+ * This hash function is called sdbm. Reference http://www.cse.yorku.ca/~oz/hash.html
+ *
+ **/
+unsigned long hash_function(char* key, int sizeOfHashtable) {
+  unsigned long hash = 0;
+  int c;
+
+  while ((c = *key++) != '\0') hash = c + (hash << 6) + (hash << 16) - hash;
+
+  return (hash % sizeOfHashtable);
+}
+
+char* get_next(char* key, int partition_number) {
+  Partition* targetPartition = partitionArray[partition_number];
+  KeyValuePair** sortedKeyValuePairArray = targetPartition->sortedKeyValuePairArray;
+  KeyValuePair* currentKeyValuePair = sortedKeyValuePairArray[targetPartition->currentArrayCounter];
+
+  assert(strcmp(currentKeyValuePair->key, key) == 0);
+
+  char** valuesArray = currentKeyValuePair->values;
+  int valuesArrayCounter = targetPartition->valueCounterForCurrentKeyValuePair;
+  int sizeOfValuesArray = currentKeyValuePair->numOfElementsInValuesArray;
+
+  if (valuesArrayCounter >= sizeOfValuesArray) {
+    return NULL;
+  }
+
+  if (valuesArrayCounter > 0) {
+    free(currentKeyValuePair->values[valuesArrayCounter - 1]);
+  }
+
+  char* currentValue = valuesArray[valuesArrayCounter];
+  targetPartition->valueCounterForCurrentKeyValuePair =
+      targetPartition->valueCounterForCurrentKeyValuePair + 1;
+  return currentValue;
+}
+
+void* GrabFileAndMap() {
+  int i;
+  char* filename;
+
+grabNewFile:
+
+  filename = NULL;
+
+  // Note: mapper threads should repetitively come here until there's no file left to map.
+  // We first grab filetable lock. Check if there's still any file to Map().
+  // if there is, grab the file from files[i], set files[i]=NULL, map() the file
+  // else, just exit the thread
+
+  Pthread_mutex_lock(&filetableLock);
+
+  // if numOfFiles left is zero, no need to go into loop anymore
+  if (numOfFilesLeft == 0) {
+    Pthread_mutex_unlock(&filetableLock);
+    pthread_exit(0);
+  }
+
+  for (i = 0; i < numFiles; i++) {
+    if (files[i] != NULL) {
+      filename = strdup(files[i]);
+      free(files[i]);
+      files[i] = NULL;
+      numOfFilesLeft--;
+      break;
+    }
+  }
+
+  Pthread_mutex_unlock(&filetableLock);
+
+  // if the mapper thread is unable to grab a file, exit it
+  assert(filename != NULL);
+  // if(filename==NULL)
+  // {
+  // 	printf("Something funny happened here.\n");
+  // }
+
+  //////////////////////////////////
+
+  _Map(filename);
+
+  free(filename);
+
+  if (numOfFilesLeft == 0)
+    pthread_exit(0);
+  else
+    goto grabNewFile;
+}
