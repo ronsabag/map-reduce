@@ -475,3 +475,45 @@ void MR_Run(int argc, char* argv[], Mapper map, int num_mappers, Reducer reduce,
   pthread_mutex_destroy(&filetableLock);
 }
 
+unsigned long MR_DefaultHashPartition(char* key, int num_partitions) {
+  unsigned long hash = 5381;
+  int c;
+  while ((c = *key++) != '\0') hash = hash * 33 + c;
+  return (hash % num_partitions);
+}
+
+void Map(char* file_name) {
+  FILE* fp = fopen(file_name, "r");
+  assert(fp != NULL);
+
+  char* line = NULL;
+  size_t size = 0;
+  while (getline(&line, &size, fp) != -1) {
+    // token, dummy equals to a line in the file
+    char *token, *dummy = line;
+    // while curr pointer doesn't reach the end of current line
+    while ((token = strsep(&dummy, " \t\n\r")) != NULL) {
+      MR_Emit(token, "1");
+    }
+  }
+  free(line);
+  fclose(fp);
+}
+
+void Reduce(char* key, Getter get_next, int partition_number) {
+  int count = 0;
+  char* value;
+  // iterate all the values that produced the same key
+  while ((value = get_next(key, partition_number)) != NULL) count++;
+  printf("%s %d\n", key, count);
+}
+
+int main(int argc, char* argv[]) {
+  // Num of mapper thread
+  //		|
+  //		|	Number of reducer thread
+  //		|		   |
+  //		↓		   ↓
+  MR_Run(argc, argv, Map, 1, Reduce, 1, MR_DefaultHashPartition);
+  return 0;
+}
