@@ -278,3 +278,101 @@ void MR_Emit(char* key, char* value) {
   }
 }
 
+/* 		Takes in an integer i and convert the hashTable for partition[i] to a linear array,
+  *then return the array of KeyValuePair
+ *
+ **/
+KeyValuePair** convertPartitionHashTableToArray(int partitionNumber) {
+  int i, arrayCounter = 0;
+  Partition* targetPartition = partitionArray[partitionNumber];
+  HashTableBucket** hashtable = targetPartition->hashTable;
+
+  KeyValuePair** array = malloc((targetPartition->numKeys) * sizeof(KeyValuePair*));
+
+  for (i = 0; i < SIZE_HASHTABLE; i++) {
+    HashTableBucket* currentBucket = hashtable[i];
+    KeyValueNode* curr = currentBucket->head;
+    if (curr == NULL) {
+      pthread_mutex_destroy(&(currentBucket->bucketLock));
+      free(currentBucket);
+      continue;
+    }
+    while (curr != NULL) {
+      KeyValuePair* keyValue = malloc(sizeof(KeyValuePair));
+      // keyValue->key=strdup(curr->key);
+
+      keyValue->key = curr->key;
+      keyValue->values = curr->values;
+
+      keyValue->numOfElementsInValuesArray = curr->numOfElementsInValuesArray;
+
+      array[arrayCounter] = keyValue;
+      arrayCounter++;
+
+      KeyValueNode* temp = curr;
+      curr = curr->next;
+      // free(temp->key);
+      // free(temp->values);
+      free(temp);
+    }
+
+    pthread_mutex_destroy(&(currentBucket->bucketLock));
+    free(currentBucket);
+  }
+  free(targetPartition->hashTable);
+
+  // printf("arrayCounter is %d     targetPartition->numKeys is
+  // %d\n",arrayCounter,targetPartition->numKeys); fflush(stdout);
+  assert(arrayCounter == targetPartition->numKeys);
+  return array;
+}
+
+int compare(const void* keyValue1, const void* keyValue2) {
+  // comparator function takes in pointer to compared values, in this case, pointer to pointer of
+  // struct keyValue
+  KeyValuePair* keyValuePair1 = *((KeyValuePair**)keyValue1);
+  KeyValuePair* keyValuePair2 = *((KeyValuePair**)keyValue2);
+  // printf("keyValuePair1->key: %s,  keyValuePair2->key:
+  // %s",keyValuePair1->key,keyValuePair2->key); fflush(stdout);
+  return strcmp(keyValuePair1->key, keyValuePair2->key);
+}
+
+void* SortPartitionsAndReduce(void* numPartition) {
+  int i;
+  KeyValuePair** array = NULL;
+  int partitionNumber = *((int*)numPartition);
+
+  Partition* targetPartition = partitionArray[partitionNumber];
+  // if current partition is empty, kill reduce thread
+  if (targetPartition->numKeys == 0) {
+    pthread_exit(0);
+  }
+
+  array = convertPartitionHashTableToArray(partitionNumber);
+
+  qsort(array, targetPartition->numKeys, sizeof(KeyValuePair*), compare);
+
+  targetPartition->sortedKeyValuePairArray = array;
+
+  for (i = 0; i < targetPartition->numKeys; i++) {
+    KeyValuePair* currentKeyValuePair = array[i];
+    char* currentKey = currentKeyValuePair->key;
+    targetPartition->currentArrayCounter = i;
+    targetPartition->valueCounterForCurrentKeyValuePair = 0;
+    _Reduce(currentKey, get_next, partitionNumber);
+
+    free(currentKeyValuePair->key);
+    // for(j=0;j<currentKeyValuePair->numOfElementsInValuesArray;j++)
+    // {
+    // 	free(currentKeyValuePair->values[j]);
+    // }
+    free(currentKeyValuePair->values[(targetPartition->valueCounterForCurrentKeyValuePair) - 1]);
+    free(currentKeyValuePair->values);
+    free(currentKeyValuePair);
+  }
+
+  free(targetPartition->sortedKeyValuePairArray);
+
+  pthread_exit(0);
+}
+
