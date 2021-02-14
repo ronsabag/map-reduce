@@ -376,3 +376,102 @@ void* SortPartitionsAndReduce(void* numPartition) {
   pthread_exit(0);
 }
 
+void MR_Run(int argc, char* argv[], Mapper map, int num_mappers, Reducer reduce, int num_reducers,
+    Partitioner partition) {
+  int i, j;
+  pthread_t mappers[num_mappers];
+  pthread_t reducers[num_reducers];
+  int** partitionNumber = NULL;
+
+  if (argc == 1) {
+    printf("Bad argument. Usage: ./mapreduce <filename_0> <filename_1> <filename_2> ... \n");
+    exit(1);
+  }
+  numFiles = argc - 1;
+  numOfFilesLeft = numFiles;
+  numOfPartition = num_reducers;
+  _Map = map;
+  _Reduce = reduce;
+  _Partition = partition;
+
+  // initialize lock for filetable
+  pthread_mutex_init(&filetableLock, NULL);
+
+  partitionNumber = malloc(num_reducers * sizeof(int*));
+
+  // create partition arrays
+  /**
+   *   Design
+   *   _________________________________________________________________________
+   *   |           |           |           |           |           |           |
+   *   | [  |  |  ]| [  |  |  ]| [  |  |  ]| [  |  |  ]| [  |  |  ]| [  |  |  ]|
+   *   |           |           |           |           |           |           |
+   *   |           |           |           |           |           |           |
+   *   |___________|___________|___________|___________|___________|___________|
+   *        P1           P2         P3          P4           P5          P6
+   */
+
+  partitionArray = malloc(num_reducers * sizeof(Partition*));
+
+  // initialize each partition in the partition array
+  for (i = 0; i < num_reducers; i++) {
+    partitionArray[i] = malloc(sizeof(Partition));
+    Partition* currentPartition = partitionArray[i];
+    currentPartition->hashTable = malloc(SIZE_HASHTABLE * sizeof(HashTableBucket*));
+    currentPartition->numKeys = 0;
+    currentPartition->sortedKeyValuePairArray = NULL;
+    currentPartition->currentArrayCounter = 0;
+    currentPartition->valueCounterForCurrentKeyValuePair = 0;
+
+    pthread_mutex_init(&(currentPartition->partitionLock), NULL);
+
+    for (j = 0; j < SIZE_HASHTABLE; j++) {
+      currentPartition->hashTable[j] = malloc(sizeof(HashTableBucket));
+      currentPartition->hashTable[j]->head = NULL;
+
+      pthread_mutex_init(&(partitionArray[i]->hashTable[j]->bucketLock), NULL);
+    }
+  }
+
+  // copy argv arrays to files array so that I can modify the content in files array
+  files = malloc((numFiles) * sizeof(char*));
+  for (i = 0; i < numFiles; i++) {
+    files[i] = strdup(argv[i + 1]);
+    // strcpy(files[i],argv[i+1]);
+  }
+
+  for (i = 0; i < num_mappers; i++) {
+    Pthread_create(&mappers[i], NULL, GrabFileAndMap, NULL);
+  }
+
+  for (i = 0; i < num_mappers; i++) {
+    Pthread_join(mappers[i], NULL);
+  }
+
+  // At this point here in method, mappers have finish doing all the work
+  free(files);
+
+  // sort the keys in the partition and reduce
+  for (i = 0; i < num_reducers; i++) {
+    partitionNumber[i] = malloc(sizeof(int));
+    *(partitionNumber[i]) = i;
+    Pthread_create(&reducers[i], NULL, SortPartitionsAndReduce, (void*)partitionNumber[i]);
+  }
+
+  for (i = 0; i < num_reducers; i++) {
+    Pthread_join(reducers[i], NULL);
+  }
+
+  // At this point here in method, reducers have finish doing all the work
+
+  for (i = 0; i < num_reducers; i++) {
+    pthread_mutex_destroy(&(partitionArray[i]->partitionLock));
+    free(partitionArray[i]);
+    free(partitionNumber[i]);
+  }
+  free(partitionArray);
+  free(partitionNumber);
+
+  pthread_mutex_destroy(&filetableLock);
+}
+
