@@ -1,0 +1,7 @@
+/build
+/tags
+*.bak
+*.pyc
+*.swp
+*.tmp
+.tags
