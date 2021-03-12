@@ -1,0 +1,67 @@
+#
+# Build configuration
+#
+cmake_minimum_required(VERSION 3.5.0 FATAL_ERROR)
+project(map-reduce CXX)
+
+# Extract version information from version.txt. The first line that looks like
+# a version string is used, so the file supports comments
+file(STRINGS version.txt version_txt REGEX "^[0-9]+\\.[0-9]+\\.[0-9]+.*$" LIMIT_COUNT 1)
+
+# If we are in a git repo we can get the version information from git describe
+execute_process(COMMAND git describe --tags --dirty=-dev
+  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+  RESULT_VARIABLE git_result
+  OUTPUT_VARIABLE git_describe
+  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+
+if(git_result EQUAL "0")
+  set(APP_VERSION "${git_describe}")
+else()
+  message(STATUS "Could not detect version with git, falling back to built-in version information.")
+  set(APP_VERSION "${version_txt}")
+endif()
+
+list(APPEND CMAKE_MODULE_PATH
+  ${PROJECT_SOURCE_DIR}/cmake
+  ${PROJECT_SOURCE_DIR}/cmake/common
+  ${PROJECT_SOURCE_DIR}/cmake/modules)
+
+include(GNUInstallDirs)
+include(utils)
+include(01-core)
+include(02-opts)
+include(04-targets)
+
+if(BUILD_DOC)
+  add_subdirectory(doc)
+endif()
+
+if (BUILD_SHELL)
+  add_subdirectory(contrib/bash)
+  add_subdirectory(contrib/zsh)
+endif()
+
+# Setup everything that uses a C++ compiler (map-reduce, map-reduce-msg, tests)
+if(HAS_CXX_COMPILATION)
+  include(cxx)
+  if(BUILD_LIBPOLY)
+    include(libpoly)
+    add_subdirectory(lib)
+  endif()
+  add_subdirectory(include)
+  add_subdirectory(src bin)
+endif()
+
+# We need to enable testing in the root folder so that 'ctest' and 'make test'
+# can be run in the build directory
+if(BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
+
+if (BUILD_CONFIG)
+  add_subdirectory(config)
+endif()
+
+include(05-summary)
